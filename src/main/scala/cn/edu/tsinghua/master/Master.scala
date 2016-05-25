@@ -11,9 +11,11 @@ class Master(discover: ActorSelection) extends Actor with ActorLogging {
   import Messages._
   import context._
 
-  var job: Job = Job.get("log/file.txt") // TODO: remove hard code here
+  var job: Job = null
 
   override def preStart = {
+    job = Job.get("log/file.txt") // TODO: remove hard code here
+
     self ! MasterInit // we need to register when the actor is created and started
   }
 
