@@ -1,0 +1,3 @@
+log/1.txt
+log/2.txt
+log/3.txt
