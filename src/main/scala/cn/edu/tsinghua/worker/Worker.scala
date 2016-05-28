@@ -7,15 +7,18 @@ import com.typesafe.config.ConfigFactory
 import akka.actor.Props
 import akka.actor.ActorSystem
 import akka.actor.ActorRef
-import akka.actor.Actor
 import akka.actor.ActorSelection
-import akka.actor.ReceiveTimeout
+import akka.actor.Actor
 import akka.actor.ActorLogging
+import akka.actor.ReceiveTimeout
+import akka.actor.Terminated
 
 import cn.edu.tsinghua.{FileAndLocation, Messages}
 
-case object WorkerInit
-case class WorkerRegister(worker: ActorRef)
+case object LookupMaster
+case class MasterLookup(worker: ActorRef)
+case class WorkerRegisterRequest(worker: ActorRef)
+case object WorkRegisterReply
 case class WorkerUnregister(worker: ActorRef)
 
 object Worker {
@@ -27,7 +30,6 @@ object Worker {
 
     // TODO: can we create an ActorSystem for all workers in Supervisor and send it to the worker here, instead of create an ActorSystem for each worker?
     val system: ActorSystem = ActorSystem("workerSys", config)
-    println(s"system: $system")
     val discover: ActorSelection = system.actorSelection(s"akka.tcp://discoverSys@$discoverHostname:$discoverPort/user/discover")
     println(s"discover: $discover")
     val worker = system.actorOf(Props(classOf[Worker], discover), "worker")
@@ -41,40 +43,56 @@ class Worker(discover: ActorSelection) extends Actor with ActorLogging {
   private var master: ActorRef = null
 
   override def preStart = {
-    self ! WorkerInit
+    self ! LookupMaster // looks up master upon start or restart
   }
 
   override def postStop = {
     discover ! WorkerUnregister(self)
   }
 
+  override def preRestart(reason: Throwable, message: Option[Any]) = {
+    context.children foreach { child ⇒
+      context.unwatch(child)
+      context.stop(child)
+    }
+
+    /*
+     * The default implementation of preRestart(on old instance) calls postStop hook, which is not what we expect.
+     * So we override preRestart here to ensure it does not call postStop hook.
+     */
+  }
+
   val receiveTimeout = 1 second
 
   def receive = init
   def init: Receive = {
-    case WorkerInit =>
-      println(s"$self registering")
-      discover ! WorkerRegister(self)
+    case LookupMaster =>
+      println(s"$self looking up master")
+      discover ! MasterLookup(self)
       setReceiveTimeout(receiveTimeout)
 
     case ReceiveTimeout =>
-      println(s"$self retries registering")
-      discover ! WorkerRegister(self)
+      println(s"$self retries looking up master")
+      discover ! MasterLookup(self)
       setReceiveTimeout(receiveTimeout)
 
     case m: ActorRef =>
       setReceiveTimeout(Duration.Undefined)
 
-      println(s"$self registered - master: $m")
+      println(s"master: $m")
       master = m
       watch(master)
 
+      println(s"$self registering")
+      discover ! WorkerRegisterRequest(self)
+
+    case WorkRegisterReply =>
+      println(s"$self registered")
       master ! IdentityRequest(self)
       become(working)
   }
 
   def working: Receive = {
-
     case m: ActorRef =>
       println("master changes from $master to $m")
       master = m

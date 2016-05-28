@@ -4,18 +4,20 @@ import akka.actor.{Actor, ActorLogging, ActorRef, ActorSelection, Terminated}
 import cn.edu.tsinghua.{FileAndLocation, Job, Messages}
 
 case object MasterInit
-case class MasterRegister(master: ActorRef)
+case class MasterRegisterRequest(master: ActorRef)
+case object MasterRegisterReply
 case class MasterUnregister(master: ActorRef)
 
-class Master(discover: ActorSelection) extends Actor with ActorLogging {
+class Master(discoverHostname: String, discoverPort: Int) extends Actor with ActorLogging {
   import Messages._
   import context._
 
-  var job: Job = null
+  val discover: ActorSelection = system.actorSelection(s"akka.tcp://discoverSys@$discoverHostname:$discoverPort/user/discover")
+  println(s"discover: $discover")
+
+  var job: Job = Job.get("log/file.txt") // TODO: remove hard code here
 
   override def preStart = {
-    job = Job.get("log/file.txt") // TODO: remove hard code here
-
     self ! MasterInit // we need to register when the actor is created and started
   }
 
@@ -30,7 +32,7 @@ class Master(discover: ActorSelection) extends Actor with ActorLogging {
     discover ! MasterUnregister(self) // we need to unregister when the actor is terminated
   }
 
-  override def preRestart(reason: Throwable, message: Option[Any]): Unit = {
+  override def preRestart(reason: Throwable, message: Option[Any]) = {
     context.children foreach { child ⇒
       context.unwatch(child)
       context.stop(child)
@@ -44,7 +46,11 @@ class Master(discover: ActorSelection) extends Actor with ActorLogging {
 
   def receive = {
     case MasterInit =>
-      discover ! MasterRegister(self) // register here instead of in preStart to ensure register after the actor started
+      println(s"$self registering")
+      discover ! MasterRegisterRequest(self) // register here instead of in preStart to ensure register after the actor started
+
+    case MasterRegisterReply =>
+      println(s"$self registered")
 
     case IdentityRequest(worker) =>
       println(s"actor with path ${worker.path} identifies itself")

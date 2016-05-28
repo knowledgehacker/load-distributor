@@ -10,6 +10,7 @@ import akka.actor.ActorSystem
 import akka.actor.ActorSelection
 import akka.actor.Actor
 import akka.actor.ActorLogging
+import akka.actor.Terminated
 import akka.actor.OneForOneStrategy
 import akka.actor.SupervisorStrategy.Restart
 
@@ -23,7 +24,6 @@ object Supervisor {
     println(s"port: ${config.getString("akka.remote.netty.tcp.port")}")
 
     val system: ActorSystem = ActorSystem("supervisorSys", config)
-    println(s"system: $system")
     val supervisor = system.actorOf(Props(classOf[Supervisor], discoverHostname, discoverPort), "supervisor")
     supervisor ! Launch
   }
@@ -40,8 +40,15 @@ import context._
 
   def receive = {
     case Launch =>
-      val discover: ActorSelection = system.actorSelection(s"akka.tcp://discoverSys@$discoverHostname:$discoverPort/user/discover")
-      println(s"discover: $discover")
-      val master = system.actorOf(Props(classOf[Master], discover), "master")
+      createAndWatch(discoverHostname, discoverPort)
+
+    case Terminated(master) =>
+      println(s"master $master terminated")
+      createAndWatch(discoverHostname, discoverPort)
+  }
+
+  private def createAndWatch(discoverHostname: String, discoverPort: Int): Unit = {
+    val master = context.actorOf(Props(classOf[Master], discoverHostname, discoverPort), "master")
+    watch(master)
   }
 }
