@@ -24,6 +24,7 @@ object Supervisor {
     println(s"port: ${config.getString("akka.remote.netty.tcp.port")}")
 
     val system: ActorSystem = ActorSystem("supervisorSys", config)
+    system.registerOnTermination(println("terminated"))
     val supervisor = system.actorOf(Props(classOf[Supervisor], discoverHostname, discoverPort), "supervisor")
     supervisor ! Launch
   }

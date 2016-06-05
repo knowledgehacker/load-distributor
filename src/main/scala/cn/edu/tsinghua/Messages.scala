@@ -1,13 +1,15 @@
 package cn.edu.tsinghua
 
+import scala.collection.mutable.MutableList
+
 import akka.actor.ActorRef
 
 object Messages {
   case class IdentityRequest(worker: ActorRef)
 	case object IdentityReply
 
-	case object TaskRequest
-  case class TaskReply(fileAndLocation: FileAndLocation, master: ActorRef)
-  case class TaskExhuasted(master: ActorRef)
-  case class TaskResult(fileAndLocation: FileAndLocation)
+	case class RoundRequest(host: String)
+  case class RoundReply(tasks: MutableList[Task], master: ActorRef)
+  case class RoundResult(host: String)
+  case class RoundEnd(master: ActorRef)
 }

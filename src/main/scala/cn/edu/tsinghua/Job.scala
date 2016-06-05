@@ -3,27 +3,50 @@ package cn.edu.tsinghua
 import java.io.FileReader
 import java.io.BufferedReader
 
-case class FileAndLocation(file: String, location: String) {
-  override def toString(): String = s"file: $file, location: $location"
-}
+import scala.collection.mutable.MutableList
+import scala.collection.mutable.Map
 
 object Job {
 
   def get(fileListLocation: String): Job = {
-    var fileAndLocations = List[FileAndLocation]()
+    val filesByLocation = Map[String, MutableList[String]]()
 
     val bufferedReader = new BufferedReader(new FileReader(fileListLocation))
     var line: String = bufferedReader.readLine
     while (line != null) {
-      fileAndLocations = fileAndLocations :+ FileAndLocation(line, "local") // TODO: change location from "local" to real server
+      val fileLocation: Array[String] = line.split("\t")
+      val file = fileLocation(0)
+      val location = fileLocation(1)
+      println(s"line: $line, file: $file, location: $location")
+
+      filesByLocation.get(location) match {
+        case Some(files: MutableList[String]) => files += file
+        case None => filesByLocation += (location -> MutableList(file))
+      }
+
       line = bufferedReader.readLine
     }
 
-    new Job(-1L, fileAndLocations) // TODO: change timestamp from "-1L" to real timestamp
+    /*
+    filesByLocation foreach { case(location: String, files: MutableList[String]) =>
+      print(s"location: $location => ")
+      files foreach {file =>
+      print(s"$file, ")}
+      println()
+    }
+    */
+
+    new Job(-1L, filesByLocation) // TODO: change timestamp from "-1L" to real timestamp
   }
 }
 
-class Job(val timestamp: Long, var fileAndLocations: List[FileAndLocation]) {
+class Job(val timestamp: Long, val filesByLocation: Map[String, MutableList[String]]) {
+  val iterator = filesByLocation.iterator
 
-  def isEmpty(): Boolean = fileAndLocations.isEmpty
+  def getFiles(location: String): MutableList[String] = {
+    //filesByLocation(location)
+    iterator.next()._2
+  }
+
+  def isEmpty(): Boolean = !iterator.hasNext
 }

@@ -1,9 +1,9 @@
 package cn.edu.tsinghua.worker
 
+import scala.collection.mutable.Set
 import scala.concurrent.duration._
 
 import com.typesafe.config.ConfigFactory
-
 import akka.actor.Props
 import akka.actor.ActorSystem
 import akka.actor.ActorRef
@@ -13,7 +13,11 @@ import akka.actor.ActorLogging
 import akka.actor.ReceiveTimeout
 import akka.actor.Terminated
 
-import cn.edu.tsinghua.{FileAndLocation, Messages}
+import akka.routing.ActorRefRoutee
+import akka.routing.Router
+import akka.routing.RoundRobinRoutingLogic
+
+import cn.edu.tsinghua.{Messages, Task, TaskResult}
 
 case object LookupMaster
 case class MasterLookup(worker: ActorRef)
@@ -25,22 +29,26 @@ object Worker {
 
   def run(discoverHostname: String, discoverPort: Int, configFileName: String, args: Array[String]) = {
     val config = ConfigFactory.load(configFileName)
-    println(s"hostname: ${config.getString("akka.remote.netty.tcp.hostname")}")
-    println(s"port: ${config.getString("akka.remote.netty.tcp.port")}")
+    val hostname = config.getString("akka.remote.netty.tcp.hostname")
+    println(s"hostname: $hostname")
+    val port = config.getString("akka.remote.netty.tcp.port")
+    println(s"port: $port")
 
-    // TODO: can we create an ActorSystem for all workers in Supervisor and send it to the worker here, instead of create an ActorSystem for each worker?
     val system: ActorSystem = ActorSystem("workerSys", config)
     val discover: ActorSelection = system.actorSelection(s"akka.tcp://discoverSys@$discoverHostname:$discoverPort/user/discover")
     println(s"discover: $discover")
-    val worker = system.actorOf(Props(classOf[Worker], discover), "worker")
+    val worker = system.actorOf(Props(classOf[Worker], discover, hostname), "worker")
   }
 }
 
-class Worker(discover: ActorSelection) extends Actor with ActorLogging {
+class Worker(discover: ActorSelection, hostname: String) extends Actor with ActorLogging {
   import Messages._
   import context._
 
   private var master: ActorRef = null
+
+  // TODO: do we need to persist "tasks" here to handle restart???
+  private val tasks: Set[Task] = Set[Task]()
 
   override def preStart = {
     self ! LookupMaster // looks up master upon start or restart
@@ -60,6 +68,16 @@ class Worker(discover: ActorSelection) extends Actor with ActorLogging {
      * The default implementation of preRestart(on old instance) calls postStop hook, which is not what we expect.
      * So we override preRestart here to ensure it does not call postStop hook.
      */
+  }
+
+  var poolRouter = {
+    val routees = Vector.fill(2) {
+      val r = context.actorOf(Props[Workee])
+      println(s"routee: $r")
+      context watch r
+      ActorRefRoutee(r)
+    }
+    Router(RoundRobinRoutingLogic(), routees)
   }
 
   val receiveTimeout = 1 second
@@ -96,16 +114,38 @@ class Worker(discover: ActorSelection) extends Actor with ActorLogging {
     case m: ActorRef =>
       println("master changes from $master to $m")
       master = m
+      watch(master)
 
     case IdentityReply =>
-      master ! TaskRequest
+      // TODO: do not request tasks of next round immediately after restart, instead should wait for the works of current round to finish
 
-    case TaskReply(fileAndLocation: FileAndLocation, master) =>
-      processTask(fileAndLocation)
-      master ! TaskResult(fileAndLocation)
-      master ! TaskRequest
+      // TODO: check what will happen if master does not exist if RoundRequest is sent???
+      master ! RoundRequest(hostname)
+      setReceiveTimeout(receiveTimeout)
 
-    case TaskExhuasted(master) =>
+    case RoundReply(taskList, master) =>
+      setReceiveTimeout(Duration.Undefined)
+      tasks ++= taskList
+      tasks foreach {task => poolRouter.route(task, self)}
+
+    case TaskResult(task) =>
+      println(s"task $task done")
+      tasks -= task
+      if (tasks.isEmpty) {
+        println("all tasks for this round done")
+        master ! RoundResult(hostname)
+      }
+
+      // next round
+      master ! RoundRequest(hostname)
+      setReceiveTimeout(receiveTimeout)
+
+    case ReceiveTimeout =>
+      println(s"$self retries round request")
+      master ! RoundRequest(hostname)
+      setReceiveTimeout(receiveTimeout)
+
+    case RoundEnd(master) =>
       /*
       // keep asking for new task periodically(every  1s)
       println("no more task, sleep 1s.")
@@ -116,10 +156,5 @@ class Worker(discover: ActorSelection) extends Actor with ActorLogging {
     case Terminated(master) =>
       log.error("Master terminated, stops watching it.")
       unwatch(master)
-  }
-
-  def processTask(fileAndLocation: FileAndLocation) = {
-    // TODO: do actual work
-    log.info(s"File ${fileAndLocation.file} downloaded from server ${fileAndLocation.location}.")
   }
 }

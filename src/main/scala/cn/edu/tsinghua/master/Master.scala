@@ -1,7 +1,10 @@
 package cn.edu.tsinghua.master
 
-import akka.actor.{Actor, ActorLogging, ActorRef, ActorSelection, Terminated}
-import cn.edu.tsinghua.{FileAndLocation, Job, Messages}
+import scala.collection.mutable.MutableList
+
+import akka.actor.{Actor, ActorRef, ActorLogging, Terminated}
+
+import cn.edu.tsinghua.{Job, Task, Messages}
 
 case object MasterInit
 case class MasterRegisterRequest(master: ActorRef)
@@ -12,13 +15,14 @@ class Master(discoverHostname: String, discoverPort: Int) extends Actor with Act
   import Messages._
   import context._
 
-  val discover: ActorSelection = system.actorSelection(s"akka.tcp://discoverSys@$discoverHostname:$discoverPort/user/discover")
-  println(s"discover: $discover")
-
+  // TODO: recover job upon restart, etc.
   var job: Job = Job.get("log/file.txt") // TODO: remove hard code here
 
+  val discover = system.actorSelection(s"akka.tcp://discoverSys@$discoverHostname:$discoverPort/user/discover")
+  println(s"discover: $discover")
+
   override def preStart = {
-    self ! MasterInit // we need to register when the actor is created and started
+    self ! MasterInit
   }
 
   override def postRestart(reason: Throwable) = {
@@ -28,7 +32,9 @@ class Master(discoverHostname: String, discoverPort: Int) extends Actor with Act
      */
   }
 
+  // TODO: when I kill actor "Master" with Ctrl+C, this hook is not called. How to handle this???
   override def postStop = {
+    println(s"$self unregistering")
     discover ! MasterUnregister(self) // we need to unregister when the actor is terminated
   }
 
@@ -57,27 +63,23 @@ class Master(discoverHostname: String, discoverPort: Int) extends Actor with Act
       worker ! IdentityReply
       watch(worker)
 
-    case TaskRequest =>
+    case RoundRequest(host) =>
       if(job.isEmpty) {
-        sender() ! TaskExhuasted(self)
+        sender() ! RoundEnd(self)
       }
       else {
-        val fileAndLocations = job.fileAndLocations
+        val tasks = MutableList[Task]()
+        val files = job.getFiles(host)
+        files foreach { file =>
+          println(s"file: $file")
+          tasks += Task(job.timestamp, file)
+        }
 
-        val fileAndLocation = fileAndLocations.head
-        println(s"next task - $fileAndLocation")
-        sender() ! TaskReply(fileAndLocation, self)
-
-        job.fileAndLocations = fileAndLocations.tail
+        sender() ! RoundReply(tasks, self)
       }
 
-    case TaskResult(fileAndLocation: FileAndLocation) =>
+    case RoundResult(host) =>
       if(job.isEmpty) {
-        /*
-        println("getJob")
-        job = Job.get("log/file.txt") // TODO: remove hard code here
-        */
-
         println("done")
       }
 
