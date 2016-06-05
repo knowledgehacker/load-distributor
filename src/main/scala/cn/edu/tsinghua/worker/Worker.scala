@@ -72,10 +72,8 @@ class Worker(discover: ActorSelection, hostname: String) extends Actor with Acto
 
   var poolRouter = {
     val routees = Vector.fill(2) {
-      val r = context.actorOf(Props[Workee])
-      println(s"routee: $r")
-      context watch r
-      ActorRefRoutee(r)
+      val workee = createAndWatchWorkee
+      ActorRefRoutee(workee)
     }
     Router(RoundRobinRoutingLogic(), routees)
   }
@@ -99,7 +97,6 @@ class Worker(discover: ActorSelection, hostname: String) extends Actor with Acto
 
       println(s"master: $m")
       master = m
-      watch(master)
 
       println(s"$self registering")
       discover ! WorkerRegisterRequest(self)
@@ -114,7 +111,6 @@ class Worker(discover: ActorSelection, hostname: String) extends Actor with Acto
     case m: ActorRef =>
       println("master changes from $master to $m")
       master = m
-      watch(master)
 
     case IdentityReply =>
       // TODO: do not request tasks of next round immediately after restart, instead should wait for the works of current round to finish
@@ -153,8 +149,20 @@ class Worker(discover: ActorSelection, hostname: String) extends Actor with Acto
       master ! TaskRequest
       */
 
-    case Terminated(master) =>
-      log.error("Master terminated, stops watching it.")
-      unwatch(master)
+    case Terminated(workee: Workee) =>
+      log.error(s"Worker $workee terminated, stops watching it.")
+      unwatch(workee)
+      poolRouter.removeRoutee(workee)
+
+      val newWorkee = createAndWatchWorkee()
+      poolRouter.addRoutee(newWorkee)
+  }
+
+  private def createAndWatchWorkee(): ActorRef = {
+    val workee = context.actorOf(Props[Workee])
+    println(s"workee: $workee")
+    context watch workee
+
+    workee
   }
 }
