@@ -12,8 +12,6 @@ import cn.edu.tsinghua.master.{MasterRegisterRequest, MasterRegisterReply, Maste
 import cn.edu.tsinghua.worker.{MasterLookup, WorkerRegisterRequest, WorkRegisterReply, WorkerUnregister}
 
 object Discover {
-  case class MasterState(oldMaster: Option[ActorRef], master: Option[ActorRef])
-
   def run(discoverHostname: String, discoverPort: Int, configFileName: String, args: Array[String]) = {
     val config = ConfigFactory.load(configFileName)
     println(s"hostname: ${config.getString("akka.remote.netty.tcp.hostname")}")
@@ -27,33 +25,37 @@ object Discover {
 class Discover extends PersistentActor with ActorLogging {
   override def persistenceId = "discover-persistence-id"
 
-  private var oldMaster: Option[ActorRef] = None
   private var master: Option[ActorRef] = None
   private var workers = Set[ActorRef]()
 
   override def receiveRecover = {
-    case masterState: Discover.MasterState =>
-      updateMaster(masterState)
+    case masterRR: MasterRegisterRequest =>
+      master = Some(masterRR.master)
+      println(s"recover - master: $master")
+
+    case masterUnreg: MasterUnregister =>
+      master = None
+      println(s"recover - master: $master")
 
     case workerRR: WorkerRegisterRequest =>
-      registerWorker(workerRR)
+      workers += workerRR.worker
+      println(s"recover - workers: $workers")
 
     case workerUnreg: WorkerUnregister =>
-      unregisterWorker(workerUnreg)
+      workers -= workerUnreg.worker
+      println(s"recover - workers: $workers")
   }
 
   override def receiveCommand = {
     case masterRR: MasterRegisterRequest =>
-      val masterState = Discover.MasterState(oldMaster, Some(masterRR.master))
-      persist(masterState) { masterState =>
-        updateMaster(masterState)
+      persist(masterRR) { masterRR =>
+        registerMaster(masterRR)
       }
 
     case masterUnreg: MasterUnregister =>
       println(s"master ${masterUnreg.master} unregisters")
-      val masterState = Discover.MasterState(oldMaster, None)
-      persist(masterState) { masterState =>
-        updateMaster(masterState)
+      persist(masterUnreg) { masterUnreg =>
+        unregisterMaster(masterUnreg)
       }
 
     case masterLookup: MasterLookup =>
@@ -61,9 +63,9 @@ class Discover extends PersistentActor with ActorLogging {
         masterLookup.worker ! master.get
       }
 
-    case workerReg: WorkerRegisterRequest =>
-      persist(workerReg) { workerReg =>
-        registerWorker(workerReg)
+    case workerRR: WorkerRegisterRequest =>
+      persist(workerRR) { workerRR =>
+        registerWorker(workerRR)
       }
 
     case workerUnreg: WorkerUnregister =>
@@ -75,19 +77,21 @@ class Discover extends PersistentActor with ActorLogging {
       println(s"invalid message - $invalidMessage")
   }
 
-  private def updateMaster(masterState: Discover.MasterState) {
-    // master is always None when discover actor receives message "masterReg"
-    master = masterState.master
-    if (!oldMaster.isDefined) {
-      println(s"master ${master.get} registers")
-    }
-    else {
-      println(s"master changes from $oldMaster to $master")
-      workers.map(worker => worker ! master)
-    }
-    oldMaster = master
+  private def registerMaster(masterRR: MasterRegisterRequest) {
+    /*
+     * When the master stops, Discover receives "MasterUnregister", then field "master" is set to None.
+     * Thus no matter whether it is the first time for the master to register, field "master" changes from None to Some.
+     */
+    master = Some(masterRR.master)
+    println(s"master ${master.get} registers")
+    workers map {worker => worker ! master.get}
 
     master.get ! MasterRegisterReply
+  }
+
+  private def unregisterMaster(masterUnreg: MasterUnregister): Unit = {
+    println(s"master ${masterUnreg.master} unregisters")
+    master = None
   }
 
   private def registerWorker(workerRR: WorkerRegisterRequest) {
