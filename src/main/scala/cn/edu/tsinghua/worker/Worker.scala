@@ -19,8 +19,8 @@ import akka.routing.RoundRobinRoutingLogic
 
 import cn.edu.tsinghua.{Messages, Task, TaskResult}
 
-case object LookupMaster
-case class MasterLookup(worker: ActorRef)
+case object WorkerInit
+case object MasterLookup
 case class WorkerRegisterRequest(worker: ActorRef)
 case object WorkRegisterReply
 case class WorkerUnregister(worker: ActorRef)
@@ -51,11 +51,11 @@ class Worker(discover: ActorSelection, hostname: String) extends Actor with Acto
   private val tasks: Set[Task] = Set[Task]()
 
   override def preStart = {
-    self ! LookupMaster // looks up master upon start or restart
+    self ! WorkerInit
   }
 
   override def postStop = {
-    discover ! WorkerUnregister(self)
+    discover ! WorkerUnregister
   }
 
   override def preRestart(reason: Throwable, message: Option[Any]) = {
@@ -82,19 +82,15 @@ class Worker(discover: ActorSelection, hostname: String) extends Actor with Acto
 
   def receive = init
   def init: Receive = {
-    case LookupMaster =>
+    case WorkerInit =>
       println(s"$self looking up master")
-      discover ! MasterLookup(self)
+      discover ! MasterLookup
       setReceiveTimeout(receiveTimeout)
 
     case ReceiveTimeout =>
-      println(s"$self retries looking up master")
-      discover ! MasterLookup(self)
-      setReceiveTimeout(receiveTimeout)
+      self ! MasterLookup
 
     case m: ActorRef =>
-      setReceiveTimeout(Duration.Undefined)
-
       println(s"master: $m")
       master = m
 
@@ -103,7 +99,7 @@ class Worker(discover: ActorSelection, hostname: String) extends Actor with Acto
 
     case WorkRegisterReply =>
       println(s"$self registered")
-      master ! IdentityRequest(self)
+      master ! IdentityRequest
       become(working)
   }
 
@@ -119,7 +115,7 @@ class Worker(discover: ActorSelection, hostname: String) extends Actor with Acto
       master ! RoundRequest(hostname)
       setReceiveTimeout(receiveTimeout)
 
-    case RoundReply(taskList, master) =>
+    case RoundReply(taskList) =>
       setReceiveTimeout(Duration.Undefined)
       tasks ++= taskList
       tasks foreach {task => poolRouter.route(task, self)}
@@ -141,7 +137,7 @@ class Worker(discover: ActorSelection, hostname: String) extends Actor with Acto
       master ! RoundRequest(hostname)
       setReceiveTimeout(receiveTimeout)
 
-    case RoundEnd(master) =>
+    case RoundEnd =>
       /*
       // keep asking for new task periodically(every  1s)
       println("no more task, sleep 1s.")
@@ -149,7 +145,7 @@ class Worker(discover: ActorSelection, hostname: String) extends Actor with Acto
       master ! TaskRequest
       */
 
-    case Terminated(workee: Workee) =>
+    case Terminated(workee) =>
       log.error(s"Worker $workee terminated, stops watching it.")
       unwatch(workee)
       poolRouter.removeRoutee(workee)

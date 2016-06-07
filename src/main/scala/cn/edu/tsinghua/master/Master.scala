@@ -58,14 +58,15 @@ class Master(discoverHostname: String, discoverPort: Int) extends Actor with Act
     case MasterRegisterReply =>
       println(s"$self registered")
 
-    case IdentityRequest(worker) =>
+    case IdentityRequest =>
+      val worker = sender()
       println(s"actor with path ${worker.path} identifies itself")
       worker ! IdentityReply
       watch(worker)
 
     case RoundRequest(host) =>
       if(job.isEmpty) {
-        sender() ! RoundEnd(self)
+        sender() ! RoundEnd
       }
       else {
         val tasks = MutableList[Task]()
@@ -75,7 +76,7 @@ class Master(discoverHostname: String, discoverPort: Int) extends Actor with Act
           tasks += Task(job.timestamp, file)
         }
 
-        sender() ! RoundReply(tasks, self)
+        sender() ! RoundReply(tasks)
       }
 
     case RoundResult(host) =>

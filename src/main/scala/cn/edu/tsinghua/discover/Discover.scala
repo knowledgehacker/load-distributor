@@ -58,9 +58,9 @@ class Discover extends PersistentActor with ActorLogging {
         unregisterMaster(masterUnreg)
       }
 
-    case masterLookup: MasterLookup =>
+    case MasterLookup =>
       if (master.isDefined) {
-        masterLookup.worker ! master.get
+        sender() ! master.get
       }
 
     case workerRR: WorkerRegisterRequest =>
