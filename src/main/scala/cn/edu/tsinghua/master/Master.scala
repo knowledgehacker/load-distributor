@@ -1,10 +1,10 @@
 package cn.edu.tsinghua.master
 
-import scala.collection.mutable.MutableList
+import scala.collection.mutable.{Queue, MutableList}
 
 import akka.actor.{Actor, ActorRef, ActorLogging, Terminated}
 
-import cn.edu.tsinghua.{Job, Task, Messages}
+import cn.edu.tsinghua.{Work, Task, Messages}
 
 case object MasterInit
 case class MasterRegisterRequest(master: ActorRef)
@@ -15,8 +15,8 @@ class Master(discoverHostname: String, discoverPort: Int) extends Actor with Act
   import Messages._
   import context._
 
-  // TODO: recover job upon restart, etc.
-  var job: Job = Job.get("log/file.txt") // TODO: remove hard code here
+  var time: String = null
+  var works = Queue[Work]()
 
   val discover = system.actorSelection(s"akka.tcp://discoverSys@$discoverHostname:$discoverPort/user/discover")
   println(s"discover: $discover")
@@ -58,6 +58,12 @@ class Master(discoverHostname: String, discoverPort: Int) extends Actor with Act
     case MasterRegisterReply =>
       println(s"$self registered")
 
+    case tm: String =>
+      time = tm
+
+    case work: Work =>
+      works.enqueue(work)
+
     case IdentityRequest =>
       val worker = sender()
       println(s"actor with path ${worker.path} identifies itself")
@@ -65,22 +71,18 @@ class Master(discoverHostname: String, discoverPort: Int) extends Actor with Act
       watch(worker)
 
     case RoundRequest(host) =>
-      if(job.isEmpty) {
+      if(works.isEmpty) {
         sender() ! RoundEnd
       }
       else {
         val tasks = MutableList[Task]()
-        val files = job.getFiles(host)
-        files foreach { file =>
-          println(s"file: $file")
-          tasks += Task(job.timestamp, file)
-        }
-
-        sender() ! RoundReply(tasks)
+        val work = works.dequeue
+        work.files foreach {file => tasks += Task(time, file)}
+        sender() ! RoundReply(tasks.toList)
       }
 
     case RoundResult(host) =>
-      if(job.isEmpty) {
+      if(works.isEmpty) {
         println("done")
       }
 

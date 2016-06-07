@@ -1,8 +1,8 @@
 package cn.edu.tsinghua
 
-case class Task(timestamp: Long, file: String) {
+case class Task(time: String, file: String) {
   override def equals(o: Any) = o match {
-    case that: Task => timestamp == that.timestamp && file.equals(that.file)
+    case that: Task => time.equals(that.time) && file.equals(that.file)
     case _ => false
   }
 }
