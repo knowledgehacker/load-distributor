@@ -88,7 +88,7 @@ class Worker(discover: ActorSelection, hostname: String) extends Actor with Acto
       setReceiveTimeout(receiveTimeout)
 
     case ReceiveTimeout =>
-      self ! MasterLookup
+      self ! WorkerInit
 
     case m: ActorRef =>
       println(s"master: $m")
