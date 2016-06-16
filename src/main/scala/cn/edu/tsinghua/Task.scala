@@ -7,4 +7,4 @@ case class Task(time: String, file: String) {
   }
 }
 
-case class TaskResult(task: Task)
+case class TaskResult(id: Int, task: Task)

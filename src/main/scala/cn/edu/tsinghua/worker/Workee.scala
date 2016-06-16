@@ -5,27 +5,30 @@ import akka.actor.ActorLogging
 
 import cn.edu.tsinghua.{Task, TaskResult}
 
-class Workee extends Actor with ActorLogging {
+class Workee(id: Int) extends Actor with ActorLogging {
 
-  // TODO: handle the failures except restart, such as stop
-
-  override def preRestart(reason: Throwable, message: Option[Any]) = {
-    // TODO: recover work done by handling message "message"
-  }
-
-  override def postRestart(reason: Throwable) = {
-    // TODO: reprocess the message which causes the restart
+  override def postStop(): Unit = {
+    println(s"workee $self stopping")
   }
 
   def receive = {
     case task: Task =>
-      processTask(task)
-      sender() ! TaskResult(task)
+      if (!isDuplicated(task)) {
+        processTask(task)
+        sender() ! TaskResult(id, task)
+      }
   }
 
   def processTask(task: Task) = {
-    // TODO: do actual work
-    log.info(s"process file ${task.file}.")
+    log.info(s"process file ${task.file} starts.")
+
+    // test
+    context stop self
+
+    log.info(s"process file ${task.file} finishes.")
   }
 
+  private def isDuplicated(task: Task): Boolean = {
+    false
+  }
 }

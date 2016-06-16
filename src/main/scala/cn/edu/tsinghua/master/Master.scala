@@ -1,74 +1,50 @@
 package cn.edu.tsinghua.master
 
-import scala.collection.mutable.{Queue, MutableList}
+import scala.collection.mutable.{MutableList, Queue}
+import akka.actor.{Actor, ActorLogging, Terminated}
+import cn.edu.tsinghua.worker.{WorkerRegisterReply, WorkerRegisterRequest, WorkerUnregister}
+import cn.edu.tsinghua.{Messages, Task, Work}
 
-import akka.actor.{Actor, ActorRef, ActorLogging, Terminated}
+final class Works(private var time: String = null, val workQueue: Queue[Work] = Queue[Work]()) {
+  def getTime: String = time
 
-import cn.edu.tsinghua.{Work, Task, Messages}
+  def setTime(time: String) = this.time = time
 
-case object MasterInit
-case class MasterRegisterRequest(master: ActorRef)
-case object MasterRegisterReply
-case class MasterUnregister(master: ActorRef)
+  def add(work: Work) = {
+    workQueue.enqueue(work)
+  }
+
+  def remove(): Work = {
+    workQueue.dequeue()
+  }
+
+  def isEmpty(): Boolean = {
+    workQueue.isEmpty
+  }
+}
 
 class Master(discoverHostname: String, discoverPort: Int) extends Actor with ActorLogging {
   import Messages._
   import context._
 
-  var time: String = null
-  var works = Queue[Work]()
-
-  val discover = system.actorSelection(s"akka.tcp://discoverSys@$discoverHostname:$discoverPort/user/discover")
-  println(s"discover: $discover")
-
-  override def preStart = {
-    self ! MasterInit
-  }
-
-  override def postRestart(reason: Throwable) = {
-    /*
-     * The default implementation of postRestart(on new instance) calls preStart hook, which is not what we expect.
-     * So we override postRestart here to ensure it does not call preStart hook.
-     */
-  }
-
-  // TODO: when I kill actor "Master" with Ctrl+C, this hook is not called. How to handle this???
-  override def postStop = {
-    println(s"$self unregistering")
-    discover ! MasterUnregister(self) // we need to unregister when the actor is terminated
-  }
-
-  override def preRestart(reason: Throwable, message: Option[Any]) = {
-    context.children foreach { child ⇒
-      context.unwatch(child)
-      context.stop(child)
-    }
-
-    /*
-     * The default implementation of preRestart(on old instance) calls postStop hook, which is not what we expect.
-     * So we override preRestart here to ensure it does not call postStop hook.
-     */
-  }
+  val works: Works = new Works
 
   def receive = {
-    case MasterInit =>
-      println(s"$self registering")
-      discover ! MasterRegisterRequest(self) // register here instead of in preStart to ensure register after the actor started
-
-    case MasterRegisterReply =>
-      println(s"$self registered")
-
-    case tm: String =>
-      time = tm
+    case time: String =>
+      works.setTime(time)
 
     case work: Work =>
-      works.enqueue(work)
+      works.add(work)
 
-    case IdentityRequest =>
+    case WorkerRegisterRequest =>
       val worker = sender()
-      println(s"actor with path ${worker.path} identifies itself")
-      worker ! IdentityReply
+      println(s"actor with path ${worker.path} registers")
+      worker ! WorkerRegisterReply
       watch(worker)
+
+    case WorkerUnregister =>
+      val worker = sender()
+      unwatch(worker)
 
     case RoundRequest(host) =>
       if(works.isEmpty) {
@@ -76,8 +52,8 @@ class Master(discoverHostname: String, discoverPort: Int) extends Actor with Act
       }
       else {
         val tasks = MutableList[Task]()
-        val work = works.dequeue
-        work.files foreach {file => tasks += Task(time, file)}
+        val work = works.remove
+        work.files foreach {file => tasks += Task(works.getTime, file)}
         sender() ! RoundReply(tasks.toList)
       }
 
